@@ -1,0 +1,117 @@
+---
+title: "analyzing-data-in-science-analysis"
+format: html
+editor: visual
+---
+
+## Prepping, loading, setting up
+
+```{r}
+library(tidyverse)
+library(googlesheets4)
+
+d <- read_sheet("https://docs.google.com/spreadsheets/d/1gLyAAp6N_5g-Uo-eb61O-eW2apMzzqNdM8fLcBV7V3g/edit#gid=46458265",
+                  sheet = 1)
+
+qual_q80 <- read_sheet("https://docs.google.com/spreadsheets/d/1gLyAAp6N_5g-Uo-eb61O-eW2apMzzqNdM8fLcBV7V3g/edit#gid=46458265",
+                sheet = "Q 80 - MASTER")
+
+qual_q80 <- qual_q80 %>% janitor::clean_names()
+
+names(qual_q80) <- str_c("qual_q80_", names(qual_q80))
+
+names(qual_q80)[1] <- "response_id"
+
+d <- d %>% 
+  left_join(qual_q80)
+```
+
+## Demographics, overall
+
+```{r}
+d %>% 
+  count(gender) %>% 
+  mutate(prop = n /330) # other is prefer not to say
+
+d %>% 
+  mutate(years_worked = unlist(years_worked)) %>% 
+  mutate(years_worked = as.numeric(years_worked)) %>% 
+  filter(years_worked < 100) %>% # 2 outliers here
+  summarize(mean_years_worked = mean(years_worked, na.rm = T),
+            sd_years_worked = sd(years_worked, na.rm = T))
+
+d %>% 
+  count(underrepresented) %>% 
+  mutate(prop = n / 330)
+
+d %>% 
+  count(with_which_groups) %>% 
+  arrange(desc(n)) %>% 
+  filter(with_which_groups != "NA") # 9 African American/black (2.7%), 4 hispanic (1.2%), 2 asian (0.60%), 2 american indian, 1 muslim (0.30%)
+
+d %>% 
+  count(state_work) %>%  # PR, outside US, 2 NA
+  arrange(desc(n))
+```
+
+## Q80 overall 
+
+```{r}
+d %>% 
+  select(contains("qual_q80")) %>% 
+  select(-c(1, 9)) %>% 
+  summarize_all(sum, na.rm = T) %>% 
+  gather(key, val) %>% 
+  mutate(prop = val/328) %>% 
+  arrange(desc(val))
+```
+
+## Demographics, by Q80
+
+Grade Level
+Subject  area
+Level of training
+What type of school they teach?
+Schools/districts with resources are doing things differently
+Match the states to ngss (adapt ngss or not)
+
+```{r}
+d_grades <- d %>% 
+  select(response_id, grade_level_taught) %>% 
+  mutate(grade_level_taught = str_replace(grade_level_taught, ":", "")) %>% 
+  separate(col = grade_level_taught, into = c(str_c("grade", letters[1:13])), sep = ",") %>% 
+  gather(key, val, -response_id) %>% 
+  arrange(response_id) %>% 
+  mutate(val = as.integer(val)) %>% 
+  mutate(elem = if_else(val <= 5, 1, 0)) %>% 
+  mutate(second = if_else(val >= 6, 1, 0)) %>% 
+  mutate(middle = if_else(val >= 6 & val <= 8, 1, 0)) %>% 
+  mutate(high = if_else(val >= 9, 1, 0)) %>% 
+  select(response_id, elem, second, middle, high) %>%
+  group_by(response_id) %>% 
+  summarize(elem = if_else(any(elem == 1), 1, 0),
+            second = if_else(any(second == 1), 1, 0),
+            middle = if_else(any(middle == 1), 1, 0),
+            high = if_else(any(high == 1), 1, 0)) %>% 
+  mutate_if(is.double, replace_na, 0)
+
+d <- d %>% 
+  left_join(d_grades)
+
+d %>% 
+  count(qual_q80_data_visualization_graph_creation, elem, middle, high)
+```
+
+## q98 overall - prior experience
+
+```{r}
+d %>% 
+  count(q98)
+```
+
+## q99 - what is this?
+
+```{r}
+d %>% 
+  count(q99)
+```
