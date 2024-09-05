@@ -2,6 +2,10 @@
 title: "analyzing-data-in-science-analysis"
 format: html
 editor: visual
+knitr:
+  opts_chunk:
+    warning: false
+    message: false
 ---
 
 ## Prepping, loading, setting up
@@ -11,10 +15,10 @@ library(tidyverse)
 library(googlesheets4)
 
 d <- read_sheet("https://docs.google.com/spreadsheets/d/1gLyAAp6N_5g-Uo-eb61O-eW2apMzzqNdM8fLcBV7V3g/edit#gid=46458265",
-                  sheet = 1)
+                sheet = 1)
 
 qual_q80 <- read_sheet("https://docs.google.com/spreadsheets/d/1gLyAAp6N_5g-Uo-eb61O-eW2apMzzqNdM8fLcBV7V3g/edit#gid=46458265",
-                sheet = "Q 80 - MASTER")
+                       sheet = "Q 80 - MASTER")
 
 qual_q80 <- qual_q80 %>% janitor::clean_names()
 
@@ -26,54 +30,93 @@ d <- d %>%
   left_join(qual_q80)
 ```
 
-## Demographics, overall
+## RQ 1
+
+How do teachers support their students to analyze and interpret data?
+
+### open coding - Q80 overall
+
+qualitatively coded based on open/written responses to Q80
 
 ```{r}
-d %>% 
-  count(gender) %>% 
-  mutate(prop = n /330) # other is prefer not to say
-
-d %>% 
-  mutate(years_worked = unlist(years_worked)) %>% 
-  mutate(years_worked = as.numeric(years_worked)) %>% 
-  filter(years_worked < 100) %>% # 2 outliers here
-  summarize(mean_years_worked = mean(years_worked, na.rm = T),
-            sd_years_worked = sd(years_worked, na.rm = T))
-
-d %>% 
-  count(underrepresented) %>% 
-  mutate(prop = n / 330)
-
-d %>% 
-  count(with_which_groups) %>% 
-  arrange(desc(n)) %>% 
-  filter(with_which_groups != "NA") # 9 African American/black (2.7%), 4 hispanic (1.2%), 2 asian (0.60%), 2 american indian, 1 muslim (0.30%)
-
-d %>% 
-  count(state_work) %>%  # PR, outside US, 2 NA
-  arrange(desc(n))
-```
-
-## Q80 overall 
-
-```{r}
-d %>% 
+overall_freqs <- d %>% 
   select(contains("qual_q80")) %>% 
   select(-c(1, 9)) %>% 
   summarize_all(sum, na.rm = T) %>% 
   gather(key, val) %>% 
   mutate(prop = val/328) %>% 
   arrange(desc(val))
+
+overall_freqs %>% 
+  mutate(prop = prop * 100) %>% 
+  mutate_if(is.numeric, round, 3) %>% 
+  select(-val) %>% 
+  knitr::kable()
+
+overall_freqs %>% 
+  ggplot(aes(x = reorder(key, prop), y = prop)) +
+  geom_col() +
+  theme_minimal() +
+  coord_flip()
 ```
 
-## Demographics, by Q80
+### fixed response question-- NSSME
 
-Grade Level
-Subject  area
-Level of training
-What type of school they teach?
-Schools/districts with resources are doing things differently
-Match the states to ngss (adapt ngss or not)
+4 overlapping
+--
+3 maybe overlapping/overlapping a little
+2 not
+
+Q98: How often do you have students do each of the following in your class?
+
+1. Determine which data would need to be collected in order to answer a scientific question (regardless of who generated the question) (1) -- YES
+2. Determine which variables from a provided dataset are necessary to answer a scientific question (13) -- MAYBE
+3. Organize and/or represent data using tables, charts, or graphs in order to facilitate analysis (4) -- YES
+4. Identify potential sources of variability (e.g., measurement error, natural variation) in the data (5) -- MAYBE
+5. Analyze data using grade-appropriate methods in order to identify patterns, trends, or relationships (6) -- YES
+6. Consider how missing data or measurement error can affect data interpretation (7) -- NOT
+7. Select and use grade-appropriate mathematical and/or statistical techniques to analyze data (for example: determining the best measure of central tendency, examining variation in data, or developing a line of best fit) (9) -- YES
+8. Use mathematical and/or computational models to generate data to support a scientific claim (10) -- NO
+9. Use data and reasoning to defend, verbally or in writing, a claim or refute alternative scientific claims about a real-world phenomenon (regardless of who made the claims) (11) -- MAYBE
+
+```{r}
+d %>% 
+  select(q98_1:q98_9) %>% 
+  gather(key, val) %>% 
+  count(key, val) %>% 
+  filter(val != "NA") %>% 
+  # Calculate total counts per key for percentage calculation
+  group_by(key) %>% 
+  mutate(total_n = sum(n)) %>% 
+  ungroup() %>%
+  # Calculate the percentage for each val
+  mutate(percentage = (n / total_n) * 100) %>% 
+  # Reorder based on "All or almost all science lessons"
+  group_by(key) %>% 
+  mutate(order_var = sum(n[val == "All or almost all science lessons"], na.rm = TRUE)) %>% 
+  ungroup() %>%
+  arrange(desc(order_var)) %>%
+  # Use the label map for renaming keys
+  mutate(key = fct_reorder(key, order_var, .desc = TRUE),
+         val = factor(val, levels = c(
+           "All or almost all science lessons", 
+           "Often (once or twice a week)", 
+           "Sometimes (once or twice a month)", 
+           "Rarely (a few times a year)", 
+           "Never"))) %>% 
+  select(key, val, percentage) %>% 
+  spread(val, percentage) %>% 
+  mutate_if(is.numeric, round, 3) %>% 
+  knitr::kable()
+```
+## RQ2 - demographics
+
+How does this support differe based on teachers’ grade, level of training and experience, and the subject they teach?
+
+*we use what teachers say they are doing in their own words for RQ2 -- so we use Q80, not Q98*
+
+
+### Grade Level
 
 ```{r}
 d_grades <- d %>% 
@@ -99,19 +142,174 @@ d <- d %>%
   left_join(d_grades)
 
 d %>% 
-  count(qual_q80_data_visualization_graph_creation, elem, middle, high)
+  select(contains("qual_q80"), elem, middle, high) %>% 
+  select(-c(1, 9)) %>% 
+  mutate_all(replace_na, 0) %>%
+  select(-middle, -high) %>% 
+  group_by(elem) %>% 
+  summarize_all(funs(sum), na.rm = TRUE) %>% 
+  gather(key, val, -elem) %>% 
+  filter(elem == 1) %>% 
+  mutate(prop = val / 32) %>% 
+  arrange(desc(prop)) %>% 
+  knitr::kable()
 ```
-
-## q98 overall - prior experience
 
 ```{r}
 d %>% 
-  count(q98)
+  select(contains("qual_q80"), elem, middle, high) %>% 
+  select(-c(1, 9)) %>% 
+  mutate_all(replace_na, 0) %>%
+  select(-elem, -high) %>% 
+  group_by(middle) %>% 
+  summarize_all(funs(sum), na.rm = TRUE) %>% 
+  gather(key, val, -middle) %>% 
+  filter(middle == 1) %>% 
+  mutate(prop = val / 114) %>% 
+  mutate(prop = prop * 100) %>% 
+  mutate(prop = round(prop, 2)) %>%
+  arrange(desc(prop)) %>% 
+  knitr::kable()
 ```
-
-## q99 - what is this?
 
 ```{r}
 d %>% 
-  count(q99)
+  select(contains("qual_q80"), elem, middle, high) %>% 
+  select(-c(1, 9)) %>% 
+  mutate_all(replace_na, 0) %>%
+  select(-elem, -middle) %>% 
+  group_by(high) %>% 
+  summarize_all(funs(sum), na.rm = TRUE) %>% 
+  gather(key, val, -high) %>% 
+  filter(high == 1) %>% 
+  mutate(prop = val / 232) %>% 
+  mutate(prop = prop * 100) %>% 
+  mutate(prop = round(prop, 2)) %>%
+  arrange(desc(prop)) %>% 
+  knitr::kable()
+```
+
+### Subject area
+
+```{r}
+# Separate the values in the professional_role column into individual rows
+d_long <- d %>%
+  separate_rows(professional_role, sep = ",")
+
+d_long <- d_long %>% 
+  mutate(professional_role_6_text = stringr::str_to_lower(professional_role_6_text)) %>% 
+  mutate(professional_role_6_text = str_detect(professional_role_6_text, "environmental")) # double-check this works
+```
+
+```{r}
+# Trim any leading/trailing whitespace
+d_long$professional_role <- trimws(d_long$professional_role)
+
+# Create dichotomous columns for each unique professional role
+d_wide <- d_long %>%
+  mutate(value = 1) %>%
+  pivot_wider(names_from = professional_role, values_from = value, values_fill = 0)
+
+d_wide <- d_wide %>% 
+  select(contains("qual_q80"), Biology:Physics) %>% 
+  select(-c(1, 9)) %>% 
+  janitor::clean_names()
+
+d_wide <- d_wide %>% 
+  mutate_all(as.numeric) %>% 
+  mutate_all(replace_na, 0)
+
+# Identify task and subject columns
+task_columns <- grep("^qual_q80", names(d_wide), value = TRUE)
+subject_columns <- c("biology", "other_please_describe", "general_science",
+                     "earth_science_or_earth_and_space_science", "chemistry", "physics")
+
+# Function to calculate percentages for a single subject
+calculate_percentages_by_subject <- function(subject_col) {
+  total_subject <- sum(d_wide[[subject_col]] == 1, na.rm = TRUE)  # Total number of respondents for this subject
+  
+  d_wide %>%
+    filter(!!sym(subject_col) == 1) %>%  # Only include rows where the subject was selected
+    summarise(across(all_of(task_columns), ~ mean(. == 1, na.rm = TRUE) * 100)) %>%
+    mutate(subject = subject_col, total_responses = total_subject)  # Add subject name and total responses
+}
+
+# Apply the function to all subject columns and bind the results
+percentages_by_subject <- bind_rows(lapply(subject_columns, calculate_percentages_by_subject))
+
+percentages_by_subject %>% 
+  select(subject, total_responses, everything()) %>% 
+  mutate_if(is.numeric, round, 2) %>%
+  knitr::kable() # other is environmental
+```
+
+### years worked
+
+**This tells us how these items correlate with years worked**
+
+```{r}
+d %>% 
+  select(contains("qual_q80"), years_worked) %>% 
+  select(-c(1, 9)) %>% 
+  mutate(years_worked = unlist(years_worked)) %>% 
+  mutate(years_worked = as.numeric(years_worked)) %>% 
+  filter(years_worked < 100) %>% 
+  mutate_if(is.numeric, replace_na, 0) %>% 
+  corrr::correlate() %>% 
+  corrr::focus(years_worked) %>% 
+  arrange(desc(years_worked)) %>% 
+  knitr::kable()
+```
+
+### prior experience
+
+**CP: not sure this is helpful**
+
+```{r}
+
+d_long_prior <- d %>% 
+  separate_rows(q98, sep = ",")
+
+p <- d_long_prior %>% 
+  select(contains("qual_q80"), prior_exp = q98) %>% 
+  select(-c(1, 9)) %>% 
+  mutate_if(is.numeric, replace_na, 0) %>% 
+  gather(key, val, -prior_exp) %>%
+  group_by(prior_exp, key) %>% 
+  summarize(mean = mean(val)) %>% 
+  mutate(mean = mean * 100)
+
+p %>% 
+  spread(key, mean) %>% 
+  mutate_if(is.numeric, round, 3) %>% 
+  filter(prior_exp != "NA") %>% 
+  knitr::kable()
+```
+
+### who does this - state (NGSS status)
+
+```{r}
+state_data <- read_sheet("https://docs.google.com/spreadsheets/d/1wul5jRNZBVqZP53swygLD34sBXPu0xEyJyOqRXLG6Dc/edit?gid=1207018323#gid=1207018323")
+
+state_data <- state_data %>% 
+  select(state = State, status = Status)
+
+state_data
+
+d %>% 
+  select(contains("qual_q80"), state_work) %>%
+  select(-c(1, 9)) %>% 
+  rename(state = state_work) %>% 
+  left_join(state_data, by = "state") %>% 
+  mutate_if(is.numeric, replace_na, 0) %>% 
+  gather(key, val, -status) %>% 
+  group_by(status, key) %>% 
+  mutate(val = as.integer(val)) %>% 
+  summarize(mean = mean(val)) %>% 
+  mutate(mean = mean * 100) %>% 
+  spread(key, mean) %>% 
+  filter(!is.na(status)) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  select(-state)
+  knitr::kable()
 ```
